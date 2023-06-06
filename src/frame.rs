@@ -28,6 +28,7 @@ pub struct Frame {
     body: Vec<u8>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct FrameHeader {
     // indicate FIN (is the frame is last one)
     pub fin: bool,
@@ -39,6 +40,8 @@ pub struct FrameHeader {
     pub mask: Option<u32>,
     pub payloadlength: u64,
 }
+
+#[derive(Debug, PartialEq)]
 pub enum Opcode {
     Data(Data),
     Control(Control),
@@ -103,12 +106,14 @@ impl Display for Opcode {
         write!(f, "{kind}:{detail}")
     }
 }
+#[derive(Debug, PartialEq)]
 pub enum Data {
     Continue,
     Text,
     Binary,
     Reserved,
 }
+#[derive(Debug, PartialEq)]
 pub enum Control {
     Close,
     Ping,
@@ -175,15 +180,15 @@ impl FrameHeader {
         }
         let (first, second) = (head_buffer[0], head_buffer[1]);
 
-        let fin = first & 0b0001 != 0;
-        let rsv1 = first & 0b0010 != 0;
-        let rsv2 = first & 0b0100 != 0;
-        let rsv3 = first & 0b1000 != 0;
+        let fin = first & 0b1000_0000 != 0;
+        let rsv1 = first & 0b0100_0000 != 0;
+        let rsv2 = first & 0b0010_0000 != 0;
+        let rsv3 = first & 0b0001_0000 != 0;
 
-        let opcode = Opcode::parse(first >> 4);
+        let opcode = Opcode::parse(first & 0b1111);
 
         let mask = None;
-        let payloadlength = 10;
+        let payloadlength = 0;
 
         let header = FrameHeader {
             fin,
@@ -198,12 +203,12 @@ impl FrameHeader {
         Ok(Some(header))
     }
     fn format(&self) -> u32 {
-        let fin = if self.fin { 0b0001 } else { 0 };
-        let rsv1 = if self.rsv1 { 0b0010 } else { 0 };
-        let rsv2 = if self.rsv2 { 0b0100 } else { 0 };
-        let rsv3 = if self.rsv3 { 0b1000 } else { 0 };
+        let fin = if self.fin { 0b1000_0000 } else { 0 };
+        let rsv1 = if self.rsv1 { 0b0100_0000 } else { 0 };
+        let rsv2 = if self.rsv2 { 0b0010_0000 } else { 0 };
+        let rsv3 = if self.rsv3 { 0b0001_0000 } else { 0 };
 
-        let opcode = self.opcode.format() << 4;
+        let opcode = self.opcode.format();
 
         // let mask = None;
         // let payloadlength = 10;
@@ -216,6 +221,8 @@ impl FrameHeader {
 #[cfg(test)]
 mod test {
     use std::io::Cursor;
+
+    use crate::frame::Data;
 
     use super::FrameHeader;
 
@@ -232,25 +239,60 @@ mod test {
         };
         println!("Header: {}", header);
         let formatted = header.format();
-        println!("{:#034b}", formatted);
+        println!("{:#010b}", formatted);
+
+        assert_eq!(formatted, 0b10001010);
     }
     #[test]
-    fn header_parse() {
-        let header = FrameHeader {
+    fn header_format_and_parse() {
+        let header1 = FrameHeader {
+            fin: false,
+            rsv1: false,
+            rsv2: false,
+            rsv3: false,
+            opcode: super::Opcode::Data(Data::Text),
+            mask: None,
+            payloadlength: 0,
+        };
+        let header2 = FrameHeader {
+            fin: false,
+            rsv1: false,
+            rsv2: false,
+            rsv3: false,
+            opcode: super::Opcode::Data(Data::Continue),
+            mask: None,
+            payloadlength: 0,
+        };
+        let header3 = FrameHeader {
             fin: true,
             rsv1: false,
             rsv2: false,
             rsv3: false,
-            opcode: super::Opcode::Control(super::Control::Close),
+            opcode: super::Opcode::Data(Data::Continue),
             mask: None,
             payloadlength: 0,
         };
-        println!("Header: {}", header);
-        let formatted = header.format();
-        println!("{:#034b}", formatted);
+        println!("Formatted1: {}", header1);
+        let formatted1 = header1.format();
+        println!("{:#010b}\n", formatted1);
 
-        let mut bits = Cursor::new(formatted.to_le_bytes());
-        let parsed = FrameHeader::parse(&mut bits).unwrap().unwrap();
-        println!("Parsed: {}", parsed);
+        println!("Formatted2: {}", header2);
+        let formatted2 = header2.format();
+        println!("{:#010b}\n", formatted2);
+        println!("Formatted3: {}", header3);
+        let formatted3 = header3.format();
+        println!("{:#010b}\n", formatted3);
+        let mut bits1 = Cursor::new(formatted1.to_le_bytes());
+        let mut bits2 = Cursor::new(formatted2.to_le_bytes());
+        let mut bits3 = Cursor::new(formatted3.to_le_bytes());
+        let parsed1 = FrameHeader::parse(&mut bits1).unwrap().unwrap();
+        let parsed2 = FrameHeader::parse(&mut bits2).unwrap().unwrap();
+        let parsed3 = FrameHeader::parse(&mut bits3).unwrap().unwrap();
+        println!("Parsed1: {}", parsed1);
+        println!("Parsed2: {}", parsed2);
+        println!("Parsed3: {}", parsed3);
+        assert_eq!(header1, parsed1);
+        assert_eq!(header2, parsed2);
+        assert_eq!(header3, parsed3);
     }
 }

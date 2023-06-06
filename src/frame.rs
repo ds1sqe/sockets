@@ -146,8 +146,27 @@ impl Frame {
     fn format() {}
 }
 
+impl Display for FrameHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let mask = match self.mask {
+            Some(val) => val.to_string(),
+            None => String::from("None"),
+        };
+        write!(
+            f,
+            "
+<Header>
+> FIN: {}
+> Opcode: {}
+> Mask: {}
+> Payload Length: {}
+",
+            self.fin, self.opcode, mask, self.payloadlength,
+        )
+    }
+}
 impl FrameHeader {
-    fn parse(cursor: &mut Cursor<impl AsRef<[u8]> + Read>) -> Result<Option<Self>, std::io::Error> {
+    fn parse(cursor: &mut Cursor<impl AsRef<[u8]>>) -> Result<Option<Self>, std::io::Error> {
         let start = cursor.position();
 
         let mut head_buffer = [0u8; 2];
@@ -191,5 +210,47 @@ impl FrameHeader {
 
         let bits = fin | rsv1 | rsv2 | rsv3 | opcode;
         bits as u32
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::Cursor;
+
+    use super::FrameHeader;
+
+    #[test]
+    fn header_format() {
+        let header = FrameHeader {
+            fin: true,
+            rsv1: false,
+            rsv2: false,
+            rsv3: false,
+            opcode: super::Opcode::Control(super::Control::Close),
+            mask: None,
+            payloadlength: 0,
+        };
+        println!("Header: {}", header);
+        let formatted = header.format();
+        println!("{:#034b}", formatted);
+    }
+    #[test]
+    fn header_parse() {
+        let header = FrameHeader {
+            fin: true,
+            rsv1: false,
+            rsv2: false,
+            rsv3: false,
+            opcode: super::Opcode::Control(super::Control::Close),
+            mask: None,
+            payloadlength: 0,
+        };
+        println!("Header: {}", header);
+        let formatted = header.format();
+        println!("{:#034b}", formatted);
+
+        let mut bits = Cursor::new(formatted.to_le_bytes());
+        let parsed = FrameHeader::parse(&mut bits).unwrap().unwrap();
+        println!("Parsed: {}", parsed);
     }
 }

@@ -1,7 +1,9 @@
 use std::{
+    any::Any,
     eprintln,
     fmt::Display,
-    io::{Cursor, Read},
+    io::{BufRead, Bytes, Cursor, Read, Write},
+    println,
 };
 
 //  Data frame spec from RFC6455
@@ -37,14 +39,16 @@ pub struct FrameHeader {
     pub rsv2: bool,
     pub rsv3: bool,
     pub opcode: Opcode,
-    pub mask: Option<u32>,
+    pub masked: bool,
     pub payloadlength: u64,
+    pub mask: Option<u32>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Opcode {
     Data(Data),
     Control(Control),
+    Reserved,
 }
 impl Opcode {
     fn parse(flags: u8) -> Self {
@@ -55,13 +59,7 @@ impl Opcode {
             0b1000 => Opcode::Control(Control::Ping),
             0b1001 => Opcode::Control(Control::Pong),
             0b1010 => Opcode::Control(Control::Close),
-            rsv => {
-                if rsv < 7 {
-                    Opcode::Data(Data::Reserved)
-                } else {
-                    Opcode::Control(Control::Reserved)
-                }
-            }
+            _ => Opcode::Reserved,
         }
     }
     fn format(&self) -> u8 {
@@ -72,8 +70,7 @@ impl Opcode {
             Opcode::Control(Control::Ping) => 0b1000,
             Opcode::Control(Control::Pong) => 0b1001,
             Opcode::Control(Control::Close) => 0b1010,
-            Opcode::Data(Data::Reserved) => 0b0111,
-            Opcode::Control(Control::Reserved) => 0b1111,
+            Opcode::Reserved => 0b1111,
         }
     }
 }
@@ -90,7 +87,6 @@ impl Display for Opcode {
                     Data::Continue => detail = "Continue",
                     Data::Text => detail = "Text",
                     Data::Binary => detail = "Binary",
-                    Data::Reserved => detail = "Reserved",
                 }
             }
             Opcode::Control(c) => {
@@ -99,26 +95,69 @@ impl Display for Opcode {
                     Control::Close => detail = "Close",
                     Control::Ping => detail = "Ping",
                     Control::Pong => detail = "Pong",
-                    Control::Reserved => detail = "Reserved",
                 }
+            }
+            Opcode::Reserved => {
+                kind = "Reserved";
+                detail = "None"
             }
         };
         write!(f, "{kind}:{detail}")
     }
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Data {
     Continue,
     Text,
     Binary,
-    Reserved,
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Control {
     Close,
     Ping,
     Pong,
-    Reserved,
+}
+
+enum PayloadLength {
+    // 7 bits
+    U8(u8),
+    // 7 + 16 bits
+    U16,
+    // 7 + 16 + 32 bits
+    U64,
+}
+impl PayloadLength {
+    fn get_format(length: u64) -> Self {
+        if length <= 0b0111_1101 {
+            PayloadLength::U8(length as u8)
+        } else if length <= 0xFFFF {
+            //65535
+            PayloadLength::U16
+        } else {
+            PayloadLength::U64
+        }
+    }
+    fn get_extra_bytes(&self) -> u8 {
+        match self {
+            Self::U8(_) => 0,
+            Self::U16 => 2,
+            Self::U64 => 8,
+        }
+    }
+    fn get_payload_lenth_byte(&self) -> u8 {
+        match self {
+            Self::U8(bit) => *bit,
+            Self::U16 => 126,
+            Self::U64 => 127,
+        }
+    }
+    fn parse(bytes: u8) -> Self {
+        match bytes & 0b0111_1111 {
+            127 => PayloadLength::U64,
+            126 => PayloadLength::U16,
+            any => PayloadLength::U8(any),
+        }
+    }
 }
 
 impl Display for Frame {
@@ -153,20 +192,16 @@ impl Frame {
 
 impl Display for FrameHeader {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let mask = match self.mask {
-            Some(val) => val.to_string(),
-            None => String::from("None"),
-        };
+        let mask = self.mask.unwrap();
         write!(
             f,
             "
 <Header>
-> FIN: {}
-> Opcode: {}
-> Mask: {}
-> Payload Length: {}
+> FIN: {} Opcode: {}
+> Masked: {} Payload length: {}
+> Mask: {:#034b}
 ",
-            self.fin, self.opcode, mask, self.payloadlength,
+            self.fin, self.opcode, self.masked, self.payloadlength, mask,
         )
     }
 }
@@ -187,8 +222,40 @@ impl FrameHeader {
 
         let opcode = Opcode::parse(first & 0b1111);
 
-        let mask = None;
-        let payloadlength = 0;
+        let payloadlength = {
+            let length_bytes = second & 0b0111_1111;
+            let extra_bytes = PayloadLength::parse(length_bytes).get_extra_bytes();
+            if extra_bytes > 0 {
+                if extra_bytes == 2 {
+                    let mut buf = [0; 2];
+                    match cursor.read_exact(&mut buf) {
+                        Ok(_) => u16::from_be_bytes(buf) as u64,
+                        Err(err) => return Err(err),
+                    }
+                } else {
+                    // extra_bytes == 8
+                    let mut buf = [0; 8];
+                    match cursor.read_exact(&mut buf) {
+                        Ok(_) => u64::from_be_bytes(buf),
+                        Err(err) => return Err(err),
+                    }
+                }
+            } else {
+                u64::from(length_bytes)
+            }
+        };
+
+        let masked = second & 0b1000_0000 != 0;
+        let mask = if masked {
+            let mut mask_bytes = [0u8; 4];
+            if cursor.read(&mut mask_bytes)? == 4 {
+                Some(u32::from_be_bytes(mask_bytes))
+            } else {
+                return Ok(None);
+            }
+        } else {
+            None
+        };
 
         let header = FrameHeader {
             fin,
@@ -196,103 +263,151 @@ impl FrameHeader {
             rsv2,
             rsv3,
             opcode,
-            mask,
+            masked,
             payloadlength,
+            mask,
         };
 
         Ok(Some(header))
     }
-    fn format(&self) -> u32 {
+    fn format(&self, output: &mut impl Write) -> Result<(), std::io::Error> {
         let fin = if self.fin { 0b1000_0000 } else { 0 };
         let rsv1 = if self.rsv1 { 0b0100_0000 } else { 0 };
         let rsv2 = if self.rsv2 { 0b0010_0000 } else { 0 };
         let rsv3 = if self.rsv3 { 0b0001_0000 } else { 0 };
-
         let opcode = self.opcode.format();
 
-        // let mask = None;
-        // let payloadlength = 10;
+        let first = fin | rsv1 | rsv2 | rsv3 | opcode;
 
-        let bits = fin | rsv1 | rsv2 | rsv3 | opcode;
-        bits as u32
+        let length = PayloadLength::get_format(self.payloadlength);
+        let maskflag = if self.masked { 0b1000_0000 } else { 0 };
+        let lengthflag = length.get_payload_lenth_byte();
+
+        let second = maskflag | lengthflag;
+
+        output.write(&[first, second]);
+
+        match length {
+            PayloadLength::U8(_) => (),
+            PayloadLength::U16 => {
+                let buf = (self.payloadlength as u16).to_be_bytes();
+                output.write(&buf);
+            }
+            PayloadLength::U64 => {
+                let buf = (self.payloadlength).to_be_bytes();
+                output.write(&buf);
+            }
+        };
+
+        if self.mask.is_some() {
+            output.write(self.mask.unwrap().to_be_bytes().as_ref());
+        }
+
+        Ok(())
+    }
+
+    fn get_random_mask(&self) -> u32 {
+        rand::random()
+    }
+    fn set_random_mask(&mut self) {
+        self.mask = Some(self.get_random_mask());
+        self.masked = true;
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
+    use std::{
+        io::{Cursor, Read},
+        print, println,
+    };
 
-    use crate::frame::Data;
+    use crate::frame::Opcode;
 
     use super::FrameHeader;
 
     #[test]
     fn header_format() {
-        let header = FrameHeader {
+        let mut header = FrameHeader {
             fin: true,
             rsv1: false,
             rsv2: false,
             rsv3: false,
             opcode: super::Opcode::Control(super::Control::Close),
             mask: None,
-            payloadlength: 0,
+            masked: false,
+            payloadlength: 123,
         };
+        header.set_random_mask();
         println!("Header: {}", header);
-        let formatted = header.format();
-        println!("{:#010b}", formatted);
+        let mut formatted = Vec::new();
+        header.format(&mut formatted);
 
-        assert_eq!(formatted, 0b10001010);
+        for bytes in formatted.bytes() {
+            let bt = bytes.unwrap();
+            print!("{:#010b} ", bt)
+        }
     }
     #[test]
-    fn header_format_and_parse() {
-        let header1 = FrameHeader {
-            fin: false,
-            rsv1: false,
-            rsv2: false,
-            rsv3: false,
-            opcode: super::Opcode::Data(Data::Text),
-            mask: None,
-            payloadlength: 0,
-        };
-        let header2 = FrameHeader {
-            fin: false,
-            rsv1: false,
-            rsv2: false,
-            rsv3: false,
-            opcode: super::Opcode::Data(Data::Continue),
-            mask: None,
-            payloadlength: 0,
-        };
-        let header3 = FrameHeader {
-            fin: true,
-            rsv1: false,
-            rsv2: false,
-            rsv3: false,
-            opcode: super::Opcode::Data(Data::Continue),
-            mask: None,
-            payloadlength: 0,
-        };
-        println!("Formatted1: {}", header1);
-        let formatted1 = header1.format();
-        println!("{:#010b}\n", formatted1);
+    fn header_format_and_parse_2() {
+        use super::*;
+        for i in 1..5 {
+            let test_length;
+            if i == 1 {
+                test_length = 100;
+            } else if i == 2 {
+                test_length = 10000;
+            } else if i == 3 {
+                test_length = 1000000;
+            } else {
+                test_length = 0;
+            }
 
-        println!("Formatted2: {}", header2);
-        let formatted2 = header2.format();
-        println!("{:#010b}\n", formatted2);
-        println!("Formatted3: {}", header3);
-        let formatted3 = header3.format();
-        println!("{:#010b}\n", formatted3);
-        let mut bits1 = Cursor::new(formatted1.to_le_bytes());
-        let mut bits2 = Cursor::new(formatted2.to_le_bytes());
-        let mut bits3 = Cursor::new(formatted3.to_le_bytes());
-        let parsed1 = FrameHeader::parse(&mut bits1).unwrap().unwrap();
-        let parsed2 = FrameHeader::parse(&mut bits2).unwrap().unwrap();
-        let parsed3 = FrameHeader::parse(&mut bits3).unwrap().unwrap();
-        println!("Parsed1: {}", parsed1);
-        println!("Parsed2: {}", parsed2);
-        println!("Parsed3: {}", parsed3);
-        assert_eq!(header1, parsed1);
-        assert_eq!(header2, parsed2);
-        assert_eq!(header3, parsed3);
+            for j in 1..8 {
+                let test_opcode = match j {
+                    1 => Opcode::Data(Data::Continue),
+                    2 => Opcode::Data(Data::Text),
+                    3 => Opcode::Data(Data::Binary),
+                    4 => Opcode::Control(Control::Ping),
+                    5 => Opcode::Control(Control::Pong),
+                    6 => Opcode::Control(Control::Close),
+                    _ => Opcode::Reserved,
+                };
+
+                for k in 1..3 {
+                    let test_fin = match k {
+                        1 => true,
+                        2 => false,
+                        _ => false,
+                    };
+
+                    let mut header = FrameHeader {
+                        fin: test_fin,
+                        rsv1: false,
+                        rsv2: false,
+                        rsv3: false,
+                        opcode: test_opcode,
+                        mask: None,
+                        masked: false,
+                        payloadlength: test_length,
+                    };
+                    header.set_random_mask();
+                    println!("Header: {}", header);
+                    let mut formatted = Vec::new();
+                    header.format(&mut formatted);
+
+                    for bytes in formatted.bytes() {
+                        let bt = bytes.unwrap();
+                        print!("{:#010b} ", bt)
+                    }
+
+                    let mut parse_target = Cursor::new(formatted);
+                    let parsed = FrameHeader::parse(&mut parse_target).unwrap().unwrap();
+                    println!("{}", parsed);
+
+                    assert_eq!(header, parsed);
+                }
+            }
+        }
     }
 }

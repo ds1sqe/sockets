@@ -1,5 +1,4 @@
-mod frame;
-mod websockets;
-mod worker;
-
-
+pub mod frame;
+pub mod http;
+pub mod websockets;
+pub mod worker;

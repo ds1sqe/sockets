@@ -1,70 +1,53 @@
 use std::io::{Read, Write};
 
-trait ConnectionState {
-    fn try_handshake(self: Box<Self>) -> Box<dyn ConnectionState>;
-    fn verify_handshake(self: Box<Self>) -> Box<dyn ConnectionState>;
-    fn abort(self: Box<Self>) -> Box<dyn ConnectionState>;
+#[derive(Debug)]
+pub enum __ConnectionState {
+    NeedHandShake,
+    MidHandShake,
+    Connected,
+    Failed,
+    Closed,
 }
 
-struct NeedHandShake {}
-impl ConnectionState for NeedHandShake {
-    fn try_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        Box::new(MidHandShake {})
-    }
-    fn verify_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
-    }
-    fn abort(self: Box<Self>) -> Box<dyn ConnectionState> {
-        Box::new(Closed {})
-    }
+#[derive(Debug)]
+pub struct Connection {
+    pub state: __ConnectionState,
 }
 
-struct MidHandShake {}
-impl ConnectionState for MidHandShake {
-    fn try_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
-    }
-    fn verify_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
-    }
-    fn abort(self: Box<Self>) -> Box<dyn ConnectionState> {
-        Box::new(Closed {})
+impl Default for Connection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-struct Accepted {}
-impl ConnectionState for Accepted {
-    fn try_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
+impl Connection {
+    pub fn new() -> Self {
+        Connection {
+            state: __ConnectionState::NeedHandShake,
+        }
     }
-    fn verify_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        Box::new(Accepted {})
+    pub fn handshake(&mut self) {
+        self.state = __ConnectionState::MidHandShake
     }
-    fn abort(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
+    pub fn connect(&mut self) {
+        self.state = __ConnectionState::Connected
     }
-}
-
-struct Closed {}
-impl ConnectionState for Closed {
-    fn try_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
+    pub fn fail(&mut self) {
+        self.state = __ConnectionState::Failed
     }
-    fn verify_handshake(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
-    }
-    fn abort(self: Box<Self>) -> Box<dyn ConnectionState> {
-        self
+    pub fn close(&mut self) {
+        self.state = __ConnectionState::Closed
     }
 }
 
+#[derive(Debug)]
 pub struct Server<Stream> {
     /// abstraction which represents the byte stream (Data stream)
     pub stream: Stream,
     // max payload size (default value : 16 MB)
     pub max_payload_size: usize,
 
-    state: Option<Box<dyn ConnectionState>>,
+    pub connection: Connection,
 }
 
 impl<Stream> Server<Stream> {
@@ -76,12 +59,12 @@ impl<Stream> Server<Stream> {
             Some(size) => Self {
                 stream,
                 max_payload_size: size,
-                state: Some(Box::new(NeedHandShake {})),
+                connection: Connection::new(),
             },
             None => Self {
                 stream,
                 max_payload_size: 16 * 1024 * 1024,
-                state: Some(Box::new(NeedHandShake {})),
+                connection: Connection::new(),
             },
         }
     }
@@ -101,10 +84,8 @@ Connection: Upgrade\r\n
 Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n
 ",
         );
-
-        if let Some(state) = self.state.take() {
-            self.state = Some(state.try_handshake())
-        }
+        self.stream.write(header.as_bytes());
+        self.stream.flush();
     }
     pub async fn receive(self) {
         self.handshake();

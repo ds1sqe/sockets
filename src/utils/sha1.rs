@@ -210,6 +210,9 @@ impl ShaOutput {
             .collect();
         str
     }
+    pub fn as_byte(&self) -> [u8; 20] {
+        self.state
+    }
 }
 
 #[cfg(test)]

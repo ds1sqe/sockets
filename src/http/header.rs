@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display, format};
 
 #[derive(Debug, PartialEq)]
-struct RequestHeader {
+pub struct RequestHeader {
     method: String,
     route: String,
     protocol: String,
@@ -17,13 +17,13 @@ impl RequestHeader {
             data: HashMap::new(),
         }
     }
-    fn from(str: &str) -> Self {
+    pub fn from(str: &str) -> Self {
         Self::__from_internal(str)
     }
-    fn get(&self, key: &str) -> Option<&String> {
+    pub fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
     }
-    fn set(&mut self, key: &str, val: &str) {
+    pub fn set(&mut self, key: &str, val: &str) {
         self.data.insert(String::from(key), String::from(val));
     }
 
@@ -57,7 +57,7 @@ impl RequestHeader {
         hdr
     }
 
-    fn format(&self) -> String {
+    pub fn format(&self) -> String {
         let first_line = format!("{} {} {}\r\n", self.method, self.route, self.protocol);
         let lines: String = self
             .data
@@ -66,6 +66,72 @@ impl RequestHeader {
             .collect();
 
         first_line + &lines
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ResponseHeader {
+    protocol: String,
+    status: String,
+    data: HashMap<String, String>,
+}
+impl Default for ResponseHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ResponseHeader {
+    fn new() -> Self {
+        ResponseHeader {
+            protocol: String::from("HTTP/1.1"),
+            status: String::from("101 Switching Protocols"),
+            data: HashMap::new(),
+        }
+    }
+    pub fn from(str: &str) -> Self {
+        Self::__from_internal(str)
+    }
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
+    }
+    pub fn set(&mut self, key: &str, val: &str) {
+        self.data.insert(String::from(key), String::from(val));
+    }
+
+    fn __from_internal(str: &str) -> Self {
+        let mut hdr = Self::new();
+
+        let mut offset = 0;
+        for (lidx, line) in str.lines().enumerate() {
+            if line.is_empty() {
+                offset += 1;
+                continue;
+            }
+            if lidx == offset {
+                // first line
+                let (protocol, status) = line.split_once(" ").unwrap();
+                hdr.protocol = String::from(protocol);
+                hdr.status = String::from(status);
+            } else {
+                let mut words = line.split(": ");
+                let key = words.next().unwrap();
+                let val = words.next().unwrap();
+                hdr.set(key, val);
+            }
+        }
+        hdr
+    }
+
+    pub fn format(&self) -> String {
+        let first_line = format!("{} {}\r\n", self.protocol, self.status);
+        let lines: String = self
+            .data
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}\r\n"))
+            .collect();
+
+        first_line + &lines + "\r\n"
     }
 }
 

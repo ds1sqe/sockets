@@ -3,6 +3,7 @@ use std::io::BufReader;
 use std::net::TcpListener;
 use std::net::TcpStream;
 
+use sockets::websockets::server::Server;
 use sockets::worker::ThreadPool;
 
 fn main() -> std::io::Result<()> {
@@ -20,25 +21,7 @@ fn main() -> std::io::Result<()> {
 }
 
 fn handle_connection(mut stream: TcpStream) -> std::io::Result<()> {
-    let reader = BufReader::new(&mut stream);
-
-    let request: String = reader
-        .lines()
-        .map(|result| result.unwrap())
-        .take_while(|line| !line.is_empty())
-        .collect();
-
-    print!("{:#?}", request);
-
-    //
-    // let header= Response::builder().status(StatusCode::SWITCHING_PROTOCOLS)
-    //     .header("Connection","Upgrade").header("Upgrade", "websocket").header("Sec-Websocket-Accept", derive_accept_key(req_key))
-    //
-    //
-    //
-    // stream.write_all(header.try_into())?;
-    //
-    // println!("{}", header);
-
+    let mut srv = Server::new(stream, None);
+    srv.handshake();
     Ok(())
 }

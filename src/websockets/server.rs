@@ -1,7 +1,18 @@
-use std::io::{Read, Write};
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    println,
+};
+
+use crate::{
+    http::header::{RequestHeader, ResponseHeader},
+    utils::{
+        base64::{self, Base64},
+        sha1::Sha1,
+    },
+};
 
 #[derive(Debug)]
-pub enum __ConnectionState {
+pub enum ConnectionState {
     NeedHandShake,
     MidHandShake,
     Connected,
@@ -11,7 +22,7 @@ pub enum __ConnectionState {
 
 #[derive(Debug)]
 pub struct Connection {
-    pub state: __ConnectionState,
+    pub state: ConnectionState,
 }
 
 impl Default for Connection {
@@ -23,20 +34,20 @@ impl Default for Connection {
 impl Connection {
     pub fn new() -> Self {
         Connection {
-            state: __ConnectionState::NeedHandShake,
+            state: ConnectionState::NeedHandShake,
         }
     }
     pub fn handshake(&mut self) {
-        self.state = __ConnectionState::MidHandShake
+        self.state = ConnectionState::MidHandShake
     }
     pub fn connect(&mut self) {
-        self.state = __ConnectionState::Connected
+        self.state = ConnectionState::Connected
     }
     pub fn fail(&mut self) {
-        self.state = __ConnectionState::Failed
+        self.state = ConnectionState::Failed
     }
     pub fn close(&mut self) {
-        self.state = __ConnectionState::Closed
+        self.state = ConnectionState::Closed
     }
 }
 
@@ -76,22 +87,59 @@ where
 {
     /// handshake with client
     pub fn handshake(mut self) {
-        let header = String::from(
-            "
-HTTP/1.1 101 Switching Protocols\r\n
-Upgrade: websocket\r\n
-Connection: Upgrade\r\n
-Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n
-",
-        );
-        self.stream.write(header.as_bytes());
-        self.stream.flush();
+        println!("handshaking ...");
+        let mut reader = BufReader::new(&mut self.stream);
+
+        let rsv: Vec<u8> = reader.fill_buf().unwrap().to_vec();
+        reader.consume(rsv.len());
+
+        let req = String::from_utf8(rsv).unwrap();
+
+        println!("Request: {}", req);
+
+        let req_hdr = RequestHeader::from(&req);
+
+        println!("Header: {:?}", req_hdr);
+
+        let swk = req_hdr.get("Sec-WebSocket-Key").unwrap();
+
+        println!("Sec-WebSocket-Key : {:?}", swk);
+
+        const WS_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+        let hash = Sha1::from([swk.as_bytes(), WS_GUID].concat())
+            .digest()
+            .as_byte();
+
+        let swa = Base64.encode(&hash);
+
+        let mut res = ResponseHeader::default();
+
+        res.set("Sec-WebSocket-Accept", &swa);
+        res.set("Upgrade", "websocket");
+        res.set("Connection", "Upgrade");
+
+        println!("Response created: {:?}", res);
+
+        self.stream.write_all(res.format().as_bytes()).unwrap();
+
+        println!("Responsed with");
+        println!("{}", res.format());
+
+        loop {}
     }
-    pub async fn receive(self) {
-        self.handshake();
+
+    pub fn receive(self, data: &[u8]) {
+        // match self.connection.state {
+        //     ConnectionState::NeedHandShake => self.handshake(),
+        //     ConnectionState::MidHandShake => {}
+        //     ConnectionState::Connected => {}
+        //     ConnectionState::Closed => {}
+        //     _ => {}
+        // }
     }
     /// send msg to client
-    pub async fn send(&self) {}
+    pub fn send(&self) {}
     /// close connection
-    pub async fn close(&self) {}
+    pub fn close(&self) {}
 }

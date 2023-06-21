@@ -20,8 +20,8 @@ impl RequestHeader {
     fn from(str: &str) -> Self {
         Self::__from_internal(str)
     }
-    fn get(&self, key: &str) {
-        self.data.get(key);
+    fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
     }
     fn set(&mut self, key: &str, val: &str) {
         self.data.insert(String::from(key), String::from(val));

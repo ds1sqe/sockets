@@ -1,8 +1,12 @@
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::Read;
 use std::net::TcpListener;
 use std::net::TcpStream;
 
+use sockets::frame::Control;
+use sockets::frame::Data;
+use sockets::frame::Opcode;
 use sockets::websockets::server::Server;
 use sockets::worker::ThreadPool;
 
@@ -22,6 +26,35 @@ fn main() -> std::io::Result<()> {
 
 fn handle_connection(mut stream: TcpStream) -> std::io::Result<()> {
     let mut srv = Server::new(stream, None);
-    srv.handshake();
+    srv.handshake().unwrap();
+
+    loop {
+        let packet = srv.receive();
+        if packet.header.opcode == Opcode::Data(Data::Text) {
+            let msg = String::from_utf8(packet.payload.clone()).unwrap();
+            if msg == "ping" || msg == "Ping" {
+                srv.send_msg(String::from("Pong"));
+            } else {
+                srv.send_msg(msg)
+            }
+        }
+
+        if packet.header.opcode == Opcode::Control(Control::Ping) {
+            srv.send_pong();
+        }
+
+        if packet.header.opcode == Opcode::Control(Control::Close) {
+            let buf: [u8; 2] = packet.payload.try_into().unwrap();
+            let code = u16::from_be_bytes(buf);
+            println!(
+                "
+Got close call from client
+>> Code: {}",
+                code
+            );
+            break;
+        }
+    }
+
     Ok(())
 }

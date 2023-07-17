@@ -1,9 +1,9 @@
 use std::{
     any::Any,
     eprintln,
-    fmt::Display,
+    fmt::{format, Display},
     io::{BufRead, Bytes, Cursor, Read, Write},
-    println,
+    println, vec,
 };
 
 //  Data frame spec from RFC6455
@@ -25,9 +25,11 @@ use std::{
 // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
 // |                     Payload Data continued ...                |
 // +---------------------------------------------------------------+
+
+#[derive(Debug, PartialEq)]
 pub struct Frame {
-    header: FrameHeader,
-    body: Vec<u8>,
+    pub header: FrameHeader,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,9 +58,9 @@ impl Opcode {
             0b0000 => Opcode::Data(Data::Continue),
             0b0001 => Opcode::Data(Data::Text),
             0b0010 => Opcode::Data(Data::Binary),
-            0b1000 => Opcode::Control(Control::Ping),
-            0b1001 => Opcode::Control(Control::Pong),
-            0b1010 => Opcode::Control(Control::Close),
+            0b1000 => Opcode::Control(Control::Close),
+            0b1001 => Opcode::Control(Control::Ping),
+            0b1010 => Opcode::Control(Control::Pong),
             _ => Opcode::Reserved,
         }
     }
@@ -67,9 +69,9 @@ impl Opcode {
             Opcode::Data(Data::Continue) => 0b0000,
             Opcode::Data(Data::Text) => 0b0001,
             Opcode::Data(Data::Binary) => 0b0010,
-            Opcode::Control(Control::Ping) => 0b1000,
-            Opcode::Control(Control::Pong) => 0b1001,
-            Opcode::Control(Control::Close) => 0b1010,
+            Opcode::Control(Control::Close) => 0b1000,
+            Opcode::Control(Control::Ping) => 0b1001,
+            Opcode::Control(Control::Pong) => 0b1010,
             Opcode::Reserved => 0b1111,
         }
     }
@@ -121,9 +123,9 @@ pub enum Control {
 enum PayloadLength {
     // 7 bits
     U8(u8),
-    // 7 + 16 bits
+    // 16 bits
     U16,
-    // 7 + 16 + 32 bits
+    // 64 bits
     U64,
 }
 impl PayloadLength {
@@ -163,7 +165,7 @@ impl PayloadLength {
 impl Display for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mask = match self.header.mask {
-            Some(val) => val.to_string(),
+            Some(val) => format!("{:b}", val),
             None => String::from("None"),
         };
         write!(
@@ -174,20 +176,96 @@ Header
 > FIN: {}
 > Opcode: {}
 > Mask: {}
-> Payload Length: {}
-Payload
-> {:?}
-",
-            self.header.fin, self.header.opcode, mask, self.header.payloadlength, self.body
+> Payload Length: {}",
+            self.header.fin, self.header.opcode, mask, self.header.payloadlength
         )
+        .unwrap();
+
+        match self.header.opcode {
+            Opcode::Data(Data::Text) => {
+                write!(
+                    f,
+                    "
+<Payload>
+{}",
+                    String::from_utf8(self.payload.clone()).unwrap()
+                )
+            }
+            _ => {
+                write!(
+                    f,
+                    "
+<Payload>
+{:?}",
+                    self.payload.bytes()
+                )
+            }
+        }
     }
 }
 
 impl Frame {
-    // parse bytes to internal Data
-    fn parse() {}
-    // internal Data to bytes
-    fn format() {}
+    /// parse bytes to internal Data
+    pub fn parse(raw: &mut Vec<u8>) -> Self {
+        let mut frame_cursor = Cursor::new(raw);
+        let frame_header = FrameHeader::parse(&mut frame_cursor).unwrap().unwrap();
+
+        let mut payload = vec![0; frame_header.payloadlength as usize];
+
+        frame_cursor.read_exact(&mut payload).unwrap();
+
+        Self::applymask(&mut payload, frame_header.mask.unwrap());
+
+        Frame {
+            header: frame_header,
+            payload,
+        }
+    }
+    /// write bytes to output form internal data
+    pub fn format(&self, output: &mut impl Write) -> Result<(), std::io::Error> {
+        self.header.format(output).unwrap();
+        output.write_all(self.payload.as_slice()).unwrap();
+        Ok(())
+    }
+    fn applymask(target: &mut [u8], mask: u32) {
+        let b1: u8 = ((mask >> 24) & 0xff) as u8;
+        let b2: u8 = ((mask >> 16) & 0xff) as u8;
+        let b3: u8 = ((mask >> 8) & 0xff) as u8;
+        let b4: u8 = (mask & 0xff) as u8;
+        let mask_u8 = [b1, b2, b3, b4];
+
+        for (idx, byte) in target.iter_mut().enumerate() {
+            *byte ^= mask_u8[3 & idx];
+        }
+    }
+    pub fn create_msg_frame(msg: String) -> Self {
+        let header = FrameHeader {
+            fin: true,
+            rsv1: false,
+            rsv2: false,
+            rsv3: false,
+            opcode: Opcode::Data(Data::Text),
+            mask: None,
+            masked: false,
+            payloadlength: msg.len() as u64,
+        };
+        let payload = Vec::from(msg.as_bytes());
+        Frame { header, payload }
+    }
+    pub fn create_pong_frame() -> Self {
+        let header = FrameHeader {
+            fin: true,
+            rsv1: false,
+            rsv2: false,
+            rsv3: false,
+            opcode: Opcode::Control(Control::Close),
+            mask: None,
+            masked: false,
+            payloadlength: 0,
+        };
+        let payload = Vec::new();
+        Frame { header, payload }
+    }
 }
 
 impl Display for FrameHeader {
@@ -206,7 +284,7 @@ impl Display for FrameHeader {
     }
 }
 impl FrameHeader {
-    fn parse(cursor: &mut Cursor<impl AsRef<[u8]>>) -> Result<Option<Self>, std::io::Error> {
+    pub fn parse(cursor: &mut Cursor<impl AsRef<[u8]>>) -> Result<Option<Self>, std::io::Error> {
         let start = cursor.position();
 
         let mut head_buffer = [0u8; 2];

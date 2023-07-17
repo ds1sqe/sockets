@@ -1,9 +1,10 @@
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     println,
 };
 
 use crate::{
+    frame::{Frame, FrameHeader},
     http::header::{RequestHeader, ResponseHeader},
     utils::{
         base64::{self, Base64},
@@ -37,15 +38,19 @@ impl Connection {
             state: ConnectionState::NeedHandShake,
         }
     }
+    /// change state to mid handshake
     pub fn handshake(&mut self) {
         self.state = ConnectionState::MidHandShake
     }
+    /// change state to connected
     pub fn connect(&mut self) {
         self.state = ConnectionState::Connected
     }
+    /// change state to faild
     pub fn fail(&mut self) {
         self.state = ConnectionState::Failed
     }
+    /// change state to closed
     pub fn close(&mut self) {
         self.state = ConnectionState::Closed
     }
@@ -86,8 +91,11 @@ where
     Stream: Unpin + Read + Write,
 {
     /// handshake with client
-    pub fn handshake(mut self) {
+    pub fn handshake(&mut self) -> std::io::Result<()> {
         println!("handshaking ...");
+
+        self.connection.handshake();
+
         let mut reader = BufReader::new(&mut self.stream);
 
         let rsv: Vec<u8> = reader.fill_buf().unwrap().to_vec();
@@ -126,10 +134,12 @@ where
         println!("Responsed with");
         println!("{}", res.format());
 
-        loop {}
+        self.connection.connect();
+
+        Ok(())
     }
 
-    pub fn receive(self, data: &[u8]) {
+    pub fn receive(&mut self) -> Frame {
         // match self.connection.state {
         //     ConnectionState::NeedHandShake => self.handshake(),
         //     ConnectionState::MidHandShake => {}
@@ -137,9 +147,28 @@ where
         //     ConnectionState::Closed => {}
         //     _ => {}
         // }
+
+        let mut reader = BufReader::new(&mut self.stream);
+
+        let mut rsv: Vec<u8> = reader.fill_buf().unwrap().to_vec();
+        reader.consume(rsv.len());
+
+        let frame = Frame::parse(&mut rsv);
+
+        println!("{}", frame);
+
+        frame
     }
+
     /// send msg to client
-    pub fn send(&self) {}
+    pub fn send_msg(&mut self, msg: String) {
+        let frame = Frame::create_msg_frame(msg);
+        frame.format(&mut self.stream).unwrap();
+    }
+    pub fn send_pong(&mut self) {
+        let frame = Frame::create_pong_frame();
+        frame.format(&mut self.stream).unwrap();
+    }
     /// close connection
     pub fn close(&self) {}
 }

@@ -10,9 +10,9 @@ const K3: u32 = 0xCA62C1D6u32;
 
 #[derive(Debug)]
 pub struct Sha1 {
-    // internal state 160(32*5)
+    /// internal state 160(32*5)
     state: [u32; 5],
-    // 512bits
+    /// 512bits
     blocks: [u8; 64],
 
     len: usize,

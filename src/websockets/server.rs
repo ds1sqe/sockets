@@ -5,10 +5,7 @@ use std::{
 
 use crate::{
     http::header::{RequestHeader, ResponseHeader},
-    utils::{
-        base64::{self, Base64},
-        sha1::Sha1,
-    },
+    utils::{base64::Base64, sha1::Sha1},
     websockets::frame::Frame,
 };
 
@@ -57,7 +54,7 @@ impl Connection {
 }
 
 #[derive(Debug)]
-pub struct Server<Stream> {
+pub struct WebsocketConnection<Stream> {
     /// abstraction which represents the byte stream (Data stream)
     pub stream: Stream,
     // max payload size (default value : 16 MB)
@@ -66,7 +63,7 @@ pub struct Server<Stream> {
     pub connection: Connection,
 }
 
-impl<Stream> Server<Stream> {
+impl<Stream> WebsocketConnection<Stream> {
     /// create new stream
     /// `stream` : Abstraction represents data stream
     /// `max_size` : max size of payload (default : 16 MB)
@@ -86,7 +83,7 @@ impl<Stream> Server<Stream> {
     }
 }
 
-impl<Stream> Server<Stream>
+impl<Stream> WebsocketConnection<Stream>
 where
     Stream: Unpin + Read + Write,
 {

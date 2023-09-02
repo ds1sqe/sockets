@@ -4,7 +4,7 @@ use std::net::TcpStream;
 use sockets::websockets::frame::Control;
 use sockets::websockets::frame::Data;
 use sockets::websockets::frame::Opcode;
-use sockets::websockets::server::Server;
+use sockets::websockets::server::WebsocketConnection;
 use sockets::worker::ThreadPool;
 
 fn main() -> std::io::Result<()> {
@@ -22,7 +22,7 @@ fn main() -> std::io::Result<()> {
 }
 
 fn handle_connection(mut stream: TcpStream) -> std::io::Result<()> {
-    let mut srv = Server::new(stream, None);
+    let mut srv = WebsocketConnection::new(stream, None);
     srv.handshake().unwrap();
 
     loop {

@@ -4,12 +4,12 @@ use std::{
 };
 
 use crate::{
-    frame::{Frame, FrameHeader},
     http::header::{RequestHeader, ResponseHeader},
     utils::{
         base64::{self, Base64},
         sha1::Sha1,
     },
+    websockets::frame::Frame,
 };
 
 #[derive(Debug)]

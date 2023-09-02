@@ -1,12 +1,9 @@
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::Read;
 use std::net::TcpListener;
 use std::net::TcpStream;
 
-use sockets::frame::Control;
-use sockets::frame::Data;
-use sockets::frame::Opcode;
+use sockets::websockets::frame::Control;
+use sockets::websockets::frame::Data;
+use sockets::websockets::frame::Opcode;
 use sockets::websockets::server::Server;
 use sockets::worker::ThreadPool;
 

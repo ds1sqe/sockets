@@ -400,7 +400,7 @@ mod test {
         print, println,
     };
 
-    use crate::frame::Opcode;
+    use crate::websockets::frame::Opcode;
 
     use super::FrameHeader;
 

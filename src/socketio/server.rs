@@ -29,7 +29,7 @@ impl Event {
 type Callback = fn(Event) -> Option<()>;
 
 #[derive(Debug)]
-struct Config {
+pub struct Config {
     url: String,
     threads: usize,
     max_payload_size: usize,
@@ -154,9 +154,10 @@ impl Server<TcpStream> {
         let listener = TcpListener::bind(self.config.url.clone()).unwrap();
         let threads = ThreadPool::build(self.config.threads);
 
-        for stream in listener.incoming() {
-            let stream = stream.unwrap();
-            threads.excute(|| self.manage_connection(stream))
-        }
+        // for stream in listener.incoming() {
+        //     let stream = stream.unwrap();
+        //     threads.excute(|| self.manage_connection(stream))
+        // }
+        unimplemented!()
     }
 }

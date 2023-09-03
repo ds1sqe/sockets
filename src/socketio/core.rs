@@ -8,7 +8,7 @@ pub struct Unit<T> {
     pub receiver: mpsc::Receiver<T>,
 }
 
-struct Commander<T> {
+pub struct Commander<T> {
     pub senders: Vec<mpsc::Sender<T>>,
     pub receiver: mpsc::Receiver<T>,
 }

@@ -5,9 +5,14 @@ use std::{
         Arc, Mutex,
     },
     thread,
+    time::Duration,
 };
 
+use crate::websockets::server::WebsocketConnection;
+
 use super::core::{Army, Unit};
+
+static CLOCK: u64 = 10;
 
 struct Event {
     name: String,
@@ -26,7 +31,7 @@ impl Event {
 }
 
 #[derive(Debug)]
-struct Config {
+pub struct Config {
     url: String,
     max_connection: usize,
     max_payload_size: usize,
@@ -39,6 +44,7 @@ pub struct Signal {
 pub struct Connection {
     thd: thread::JoinHandle<()>,
 }
+
 impl Connection {
     pub fn build(
         job_rx: Arc<Mutex<Receiver<TcpStream>>>,
@@ -69,7 +75,22 @@ impl Connection {
         sig_rx: Receiver<Box<dyn Send>>,
         stream: TcpStream,
     ) {
-        loop {}
+        let mut wc = WebsocketConnection::new(stream, None);
+        wc.handshake();
+
+        loop {
+            let sig = sig_rx.recv_timeout(Duration::from_millis(CLOCK));
+            match sig {
+                Ok(signal) => {
+                    println!("received signal from other stream...");
+                }
+                Err(_) => {
+                    let frame = wc.receive();
+                    println!("received msg from client...");
+                    println!("{frame}");
+                }
+            }
+        }
     }
 }
 
@@ -87,11 +108,9 @@ impl ConnectionPool {
         let mut connections = Vec::with_capacity(size);
 
         for idx in 0..size {
-            let con = Connection::build(
-                Arc::clone(&job_rx),
-                Some(transceivers[idx].take().unwrap().sender),
-                Some(transceivers[idx].take().unwrap().receiver),
-            );
+            let trsv = transceivers[idx].take().unwrap();
+            let con =
+                Connection::build(Arc::clone(&job_rx), Some(trsv.sender), Some(trsv.receiver));
             connections.push(con)
         }
 
@@ -160,4 +179,15 @@ impl Server {
             self.connections.catch_connection(stream)
         }
     }
+}
+
+#[test]
+fn test_sio_1() {
+    let config = Config {
+        url: String::from("127.0.0.1:8001"),
+        max_connection: 1000,
+        max_payload_size: 1024,
+    };
+    let mut srv = Server::build(config);
+    srv.listen();
 }

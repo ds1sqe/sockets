@@ -36,7 +36,7 @@ struct Config {
 }
 
 #[derive(Debug)]
-struct Server<Stream> {
+pub struct Server<Stream> {
     connections: HashMap<String, Arc<Mutex<WebsocketConnection<Stream>>>>,
     config: Config,
     listeners: HashMap<String, Callback>,
@@ -150,24 +150,13 @@ impl Server<TcpStream> {
         }
     }
 
-    pub fn listen(&mut self) {
+    pub fn listen(&'static mut self) {
         let listener = TcpListener::bind(self.config.url.clone()).unwrap();
-        // let threads = ThreadPool::build(self.config.threads);
+        let threads = ThreadPool::build(self.config.threads);
 
         for stream in listener.incoming() {
             let stream = stream.unwrap();
-            self.manage_connection(stream);
+            threads.excute(|| self.manage_connection(stream))
         }
     }
-}
-
-#[test]
-fn test_sio_1() {
-    let config = Config {
-        url: String::from("127.0.0.1:8001"),
-        threads: 5,
-        max_payload_size: 1024,
-    };
-    let mut srv = Server::create(config);
-    srv.listen();
 }
